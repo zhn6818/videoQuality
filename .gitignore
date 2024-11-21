@@ -1,2 +1,4 @@
 build/
 test.png
+yolov3.cfg
+yolov3.weights
