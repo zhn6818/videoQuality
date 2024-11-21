@@ -1,0 +1,47 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cmake",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "command": "cmake",
+            "args": [
+                "..",
+                "-DCMAKE_BUILD_TYPE=Debug"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "make",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "args": [
+                "-j20"
+            ],
+            "command": "make",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build",
+            "dependsOrder": "sequence", //按列出的顺序执行任务依赖项
+            //依赖项
+            "dependsOn": [
+                // "clean", //可以关闭，打开后，每次都是重新编译，全部重新编译。 关闭后，每次只编译更新的内容
+                // "cleaninstall",//该行也可以关闭，清理install路径下的virgo库，每次编译保持最新的库。
+                "cmake",
+                "make",
+                // "install"
+            ]
+        }
+    ]
+}
