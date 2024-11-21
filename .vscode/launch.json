@@ -12,6 +12,14 @@
             "args": [],
             "preLaunchTask": "build",
             
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "freeze",
+            "program": "${workspaceFolder}/build/freeze",
+            "args": [],
+            "preLaunchTask": "build",
         }
     ]
 }

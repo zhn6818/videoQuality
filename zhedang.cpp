@@ -7,7 +7,7 @@ using namespace std;
 
 // 阈值和持续帧数配置
 const int minPersistentFrames = 10;       // 持续遮挡帧数阈值
-const double blockChangeThreshold = 15.0; // 像素变化阈值
+const double blockChangeThreshold = 50.0; // 像素变化阈值
 const int blockSize = 16;                 // 块大小
 
 // 自定义比较函数
@@ -34,9 +34,9 @@ struct ObstructionArea {
   }
 };
 
-// 遮挡检测算法
 void detectObstruction(VideoCapture &cap) {
-  Mat frame, gray, prevGray, diff;
+  Mat frame, gray, diff;
+  vector<Mat> frameHistory; // 滑动窗口保存历史帧
   map<Rect, ObstructionArea, RectCompare>
       obstructionMap; // 记录每个遮挡区域的状态
   int frameNumber = 0;
@@ -49,15 +49,32 @@ void detectObstruction(VideoCapture &cap) {
     // 转换为灰度图
     cvtColor(frame, gray, COLOR_BGR2GRAY);
 
-    // 初始化第一帧
-    if (frameNumber == 0) {
-      gray.copyTo(prevGray);
+    // 更新滑动窗口
+    if (frameHistory.size() >= 100) {
+      frameHistory.erase(frameHistory.begin()); // 移除最老的帧
+    }
+    frameHistory.push_back(gray.clone());
+
+    // 如果滑动窗口未满，跳过计算
+    if (frameHistory.size() < 100) {
       frameNumber++;
       continue;
     }
 
-    // 计算帧间差分
-    absdiff(gray, prevGray, diff);
+    // 计算滑动窗口内的历史均值帧
+    Mat meanFrame = Mat::zeros(gray.size(), CV_32F);
+    for (const Mat &f : frameHistory) {
+      Mat temp;
+      f.convertTo(temp, CV_32F);
+      meanFrame += temp;
+    }
+    meanFrame /= frameHistory.size();
+
+    Mat meanFrame8U;
+    meanFrame.convertTo(meanFrame8U, CV_8U);
+
+    // 计算帧间差分（与历史均值帧）
+    absdiff(gray, meanFrame8U, diff);
 
     // 阈值化差分图像
     threshold(diff, diff, blockChangeThreshold, 255, THRESH_BINARY);
@@ -108,11 +125,8 @@ void detectObstruction(VideoCapture &cap) {
     imshow("Video Feed", frame);
     imshow("Pixel Change", diff);
 
-    // 更新上一帧
-    gray.copyTo(prevGray);
-
     // 按下 'q' 键退出
-    if (waitKey(30) == 'q')
+    if (waitKey(1) == 'q')
       break;
 
     frameNumber++;
