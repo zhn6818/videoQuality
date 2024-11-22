@@ -61,8 +61,6 @@ public:
       // 2. 背景差分
       backgroundModel->apply(blurredFrame, foregroundMask);
 
-      // 动态调整背景建模参数
-      adjustBackgroundModelParameters(blurredFrame);
 
       return assessObstruction(foregroundMask);
     } catch (const cv::Exception &e) {
@@ -72,26 +70,7 @@ public:
   }
 
 public:
-  // 动态调整背景建模参数
-  void adjustBackgroundModelParameters(const cv::Mat &frame) {
-    // 计算当前帧的平均像素变化（简单的帧差法）
-    static cv::Mat prevFrame;
-    if (!prevFrame.empty()) {
-      cv::Mat frameGray, prevFrameGray, diff;
-      cv::cvtColor(frame, frameGray, cv::COLOR_BGR2GRAY);
-      cv::cvtColor(prevFrame, prevFrameGray, cv::COLOR_BGR2GRAY);
 
-      cv::absdiff(frameGray, prevFrameGray, diff);
-      double avgChange = cv::mean(diff)[0];
-
-      // 更新背景建模器参数
-      backgroundModel->setHistory(dynamicHistory);
-      backgroundModel->setVarThreshold(dynamicVarThreshold);
-    }
-
-    // 保存当前帧以供下一次对比
-    prevFrame = frame.clone();
-  }
 
   // 遮挡评估
   bool assessObstruction(const cv::Mat &foregroundMask) {
