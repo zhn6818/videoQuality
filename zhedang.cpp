@@ -1,49 +1,45 @@
+#include <filesystem>
 #include <iostream>
-#include <opencv2/dnn.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
+
 using namespace std;
 using namespace cv;
+namespace fs = std::filesystem;
 
 class AdvancedObstructionDetector {
 private:
   // 关键参数配置
   struct DetectorConfig {
-    float changeThreshold = 0.3;    // 变化阈值
-    int persistentFrames = 15;      // 持续帧数
-    float iouThreshold = 0.5;       // 区域重叠阈值
-    bool enableDeepLearning = true; // 启用深度学习
+    float changeThreshold = 0.7;       // 变化阈值
+    int persistentFrames = 15;         // 持续帧数
+    int initialHistory = 500;          // 初始历史帧数
+    double initialVarThreshold = 100.0; // 初始阈值
   };
 
   // 背景建模
   cv::Ptr<cv::BackgroundSubtractorMOG2> backgroundModel;
 
-  // 深度学习目标检测模型
-  cv::dnn::Net objectDetectionModel;
-
   // 配置参数
   DetectorConfig config;
 
-  // 遮挡区域追踪
-  std::vector<cv::Rect> trackedObstructions;
+  // 动态调整参数
+  int dynamicHistory;
+  double dynamicVarThreshold;
 
   // 预分配矩阵
-  cv::Mat blob, foregroundMask, kernel;
+  cv::Mat foregroundMask, kernel;
 
 public:
   AdvancedObstructionDetector() {
     try {
       // 初始化背景建模
-      backgroundModel = cv::createBackgroundSubtractorMOG2(500, 16, true);
+      dynamicHistory = config.initialHistory;
+      dynamicVarThreshold = config.initialVarThreshold;
 
-      // 加载预训练目标检测模型
-      objectDetectionModel =
-          cv::dnn::readNetFromDarknet("yolov3.cfg", "yolov3.weights");
-
-      // 使用默认后端和目标
-      objectDetectionModel.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
-      objectDetectionModel.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+      backgroundModel = cv::createBackgroundSubtractorMOG2(
+          dynamicHistory, dynamicVarThreshold, false);
     } catch (const cv::Exception &e) {
       std::cerr << "初始化错误: " << e.what() << std::endl;
       throw;
@@ -58,118 +54,73 @@ public:
     }
 
     try {
-      // 1. 背景差分
-      backgroundModel->apply(frame, foregroundMask);
+      // 1. 图像预处理：高斯模糊去噪
+      cv::Mat blurredFrame;
+      cv::GaussianBlur(frame, blurredFrame, cv::Size(5, 5), 1.5);
 
-      // 2. 形态学处理
-      kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-      cv::morphologyEx(foregroundMask, foregroundMask, cv::MORPH_CLOSE, kernel);
+      // 2. 背景差分
+      backgroundModel->apply(blurredFrame, foregroundMask);
 
-      // 3. 深度学习目标检测
-      blob = cv::dnn::blobFromImage(frame, 1 / 255.0, cv::Size(416, 416),
-                                    cv::Scalar(0, 0, 0), true, false);
-      objectDetectionModel.setInput(blob);
+      // 动态调整背景建模参数
+      adjustBackgroundModelParameters(blurredFrame);
 
-      // 检测潜在遮挡目标
-      std::vector<cv::Mat> detections;
-      std::vector<cv::String> outNames =
-          objectDetectionModel.getUnconnectedOutLayersNames();
-
-      objectDetectionModel.forward(detections, outNames);
-
-      // 检查detections是否为空
-      if (detections.empty()) {
-        std::cerr << "未检测到任何目标" << std::endl;
-        return false;
-      }
-
-      // 4. 区域分析
-      std::vector<cv::Rect> obstructionAreas =
-          analyzeDetections(detections, frame);
-
-      // 5. 遮挡判断
-      return assessObstruction(obstructionAreas, foregroundMask);
+      return assessObstruction(foregroundMask);
     } catch (const cv::Exception &e) {
       std::cerr << "检测过程发生错误: " << e.what() << std::endl;
       return false;
     }
   }
 
-private:
-  // 检测结果分析
-  std::vector<cv::Rect>
-  analyzeDetections(const std::vector<cv::Mat> &detections,
-                    const cv::Mat &frame) {
-    std::vector<cv::Rect> potentialObstructions;
+public:
+  // 动态调整背景建模参数
+  void adjustBackgroundModelParameters(const cv::Mat &frame) {
+    // 计算当前帧的平均像素变化（简单的帧差法）
+    static cv::Mat prevFrame;
+    if (!prevFrame.empty()) {
+      cv::Mat frameGray, prevFrameGray, diff;
+      cv::cvtColor(frame, frameGray, cv::COLOR_BGR2GRAY);
+      cv::cvtColor(prevFrame, prevFrameGray, cv::COLOR_BGR2GRAY);
 
-    for (const auto &detection : detections) {
-      // 检查检测结果是否为空或格式不符合
-      if (detection.empty() || detection.dims != 4) {
-        std::cerr << "无效的检测结果" << std::endl;
-        continue;
-      }
+      cv::absdiff(frameGray, prevFrameGray, diff);
+      double avgChange = cv::mean(diff)[0];
 
-      for (int i = 0; i < detection.size[2]; ++i) {
-        try {
-          const float *data = detection.ptr<float>(0, 0, i);
-          float confidence = data[2];
-          int classId = static_cast<int>(data[1]);
-
-          if (confidence > 0.5 && isObstructionClass(classId)) {
-            float x = data[3] * frame.cols;
-            float y = data[4] * frame.rows;
-            float width = data[5] * frame.cols;
-            float height = data[6] * frame.rows;
-
-            potentialObstructions.push_back(cv::Rect(x, y, width, height));
-          }
-        } catch (const cv::Exception &e) {
-          std::cerr << "处理检测结果时发生错误: " << e.what() << std::endl;
-        }
-      }
+      // 更新背景建模器参数
+      backgroundModel->setHistory(dynamicHistory);
+      backgroundModel->setVarThreshold(dynamicVarThreshold);
     }
 
-    return potentialObstructions;
-  }
-
-  // 判断是否为遮挡类别
-  bool isObstructionClass(int classId) {
-    // 定义可能导致遮挡的对象类别
-    std::vector<int> obstructionClasses = {
-        0,  // 人
-        24, // 手
-        73  // 其他遮挡物
-    };
-
-    return std::find(obstructionClasses.begin(), obstructionClasses.end(),
-                     classId) != obstructionClasses.end();
+    // 保存当前帧以供下一次对比
+    prevFrame = frame.clone();
   }
 
   // 遮挡评估
-  bool assessObstruction(const std::vector<cv::Rect> &obstructionAreas,
-                         const cv::Mat &foregroundMask) {
+  bool assessObstruction(const cv::Mat &foregroundMask) {
     // 计算遮挡覆盖率
+    cv::imshow("foregroud", foregroundMask);
     double maskedArea = cv::countNonZero(foregroundMask);
     double totalArea = foregroundMask.rows * foregroundMask.cols;
     double coverageRatio = maskedArea / totalArea;
 
-    // 区域重叠判断
-    bool hasSignificantObstruction = coverageRatio > config.changeThreshold;
-
-    // 额外的遮挡区域判断
-    if (!obstructionAreas.empty()) {
-      hasSignificantObstruction = true;
-    }
-
-    return hasSignificantObstruction;
+    // 判断遮挡是否显著
+    return coverageRatio > config.changeThreshold;
   }
 
   // 告警日志记录
-  void logObstruction(const cv::Mat &frame) {
-    // 记录遮挡时的帧
-    std::string filename =
-        "obstruction_" + std::to_string(std::time(nullptr)) + ".jpg";
-    cv::imwrite(filename, frame);
+  void logObstruction(const cv::Mat &frame, const std::string &path) {
+    try {
+      // 确保路径存在
+      if (!fs::exists(path)) {
+        fs::create_directories(path);
+      }
+
+      // 保存遮挡帧到指定目录
+      std::string filename =
+          path + "/obstruction_" + std::to_string(std::time(nullptr)) + ".jpg";
+      cv::imwrite(filename, frame);
+      std::cout << "遮挡帧已保存至: " << filename << std::endl;
+    } catch (const std::exception &e) {
+      std::cerr << "保存遮挡帧失败: " << e.what() << std::endl;
+    }
   }
 };
 
@@ -190,6 +141,9 @@ int main() {
     // 创建遮挡检测器
     AdvancedObstructionDetector detector;
 
+    // 设置保存路径
+    std::string savePath = "./result";
+
     while (true) {
       cv::Mat frame;
       cap >> frame;
@@ -204,7 +158,7 @@ int main() {
 
       if (isObstructed) {
         std::cout << "摄像头可能被遮挡!" << std::endl;
-        // 可以在这里触发告警逻辑
+        detector.logObstruction(frame, savePath); // 保存遮挡帧到指定路径
       }
 
       // 显示帧
