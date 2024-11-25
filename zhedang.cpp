@@ -1,156 +1,135 @@
-#include <filesystem>
-#include <iostream>
 #include <opencv2/opencv.hpp>
-#include <string>
+#include <deque>
 #include <vector>
+#include <iostream>
+#include <chrono>
 
 using namespace std;
 using namespace cv;
-namespace fs = std::filesystem;
 
-class AdvancedObstructionDetector {
-private:
-  // 关键参数配置
-  struct DetectorConfig {
-    float changeThreshold = 0.7;       // 变化阈值
-    int persistentFrames = 15;         // 持续帧数
-    int initialHistory = 500;          // 初始历史帧数
-    double initialVarThreshold = 100.0; // 初始阈值
-  };
+class ZheDang {
+  private:
+    deque<Mat> frameBuffer;
+    const size_t bufferSize;
+    const int blockSize;
+    int frameCount;
 
-  // 背景建模
-  cv::Ptr<cv::BackgroundSubtractorMOG2> backgroundModel;
+    // 计算MSE函数
+    double calculateMSE(const Mat &img1, const Mat &img2) {
+        if (img1.size() != img2.size() || img1.type() != img2.type()) {
+            cerr << "Error: Images must have the same dimensions and type." << endl;
+            return -1;
+        }
 
-  // 配置参数
-  DetectorConfig config;
+        Mat diff;
+        absdiff(img1, img2, diff);
+        diff.convertTo(diff, CV_32F);
 
-  // 动态调整参数
-  int dynamicHistory;
-  double dynamicVarThreshold;
+        Mat squaredDiff;
+        pow(diff, 2, squaredDiff);
 
-  // 预分配矩阵
-  cv::Mat foregroundMask, kernel;
+        Scalar mse = mean(squaredDiff);
 
-public:
-  AdvancedObstructionDetector() {
-    try {
-      // 初始化背景建模
-      dynamicHistory = config.initialHistory;
-      dynamicVarThreshold = config.initialVarThreshold;
-
-      backgroundModel = cv::createBackgroundSubtractorMOG2(
-          dynamicHistory, dynamicVarThreshold, false);
-    } catch (const cv::Exception &e) {
-      std::cerr << "初始化错误: " << e.what() << std::endl;
-      throw;
-    }
-  }
-
-  // 核心遮挡检测方法
-  bool detectObstruction(const cv::Mat &frame) {
-    if (frame.empty()) {
-      std::cerr << "无效帧" << std::endl;
-      return false;
+        double maxError = 50.0 * 50.0;
+        double normalizedMSE = (mse[0] + mse[1] + mse[2]) / (maxError * img1.channels());
+        return normalizedMSE;
     }
 
-    try {
-      // 1. 图像预处理：高斯模糊去噪
-      cv::Mat blurredFrame;
-      cv::GaussianBlur(frame, blurredFrame, cv::Size(5, 5), 1.5);
+    void processFrame(Mat &frame, const Mat &grayFrame) {
+        // Add frame count text
+        string text = "Frame Count: " + to_string(frameCount++);
+        putText(frame, text, Point(10, 50), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 2);
 
-      // 2. 背景差分
-      backgroundModel->apply(blurredFrame, foregroundMask);
+        // Process frame buffer
+        if (frameBuffer.size() == bufferSize) {
+            const Mat &firstFrame = frameBuffer.front();
 
+            // Calculate similarity for each block
+            for (int y = 0; y < firstFrame.rows; y += blockSize) {
+                for (int x = 0; x < firstFrame.cols; x += blockSize) {
+                    Rect blockRegion(x, y, blockSize, blockSize);
+                    if (x + blockSize > firstFrame.cols || y + blockSize > firstFrame.rows) {
+                        continue;
+                    }
+                    Mat block1 = firstFrame(blockRegion);
+                    Mat block2 = grayFrame(blockRegion);
 
-      return assessObstruction(foregroundMask);
-    } catch (const cv::Exception &e) {
-      std::cerr << "检测过程发生错误: " << e.what() << std::endl;
-      return false;
+                    double blockSimilarity = calculateMSE(block1, block2);
+
+                    string similarityText = format("%.2f", blockSimilarity);
+                    Point textOrigin(x, y + 15);
+                    putText(frame, similarityText, textOrigin, FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 0), 1);
+                }
+            }
+            imshow("contrast", firstFrame);
+            imshow("Frame with Similarity", frame);
+        }
     }
-  }
 
-public:
+  public:
+    ZheDang(size_t bufSize = 300, int blkSize = 64) : bufferSize(bufSize), blockSize(blkSize), frameCount(0) {}
 
+    // 处理单帧图像的公开接口
+    void processImage(Mat &frame) {
+        if (frame.empty()) {
+            cerr << "Empty frame received." << endl;
+            return;
+        }
 
-  // 遮挡评估
-  bool assessObstruction(const cv::Mat &foregroundMask) {
-    // 计算遮挡覆盖率
-    cv::imshow("foregroud", foregroundMask);
-    double maskedArea = cv::countNonZero(foregroundMask);
-    double totalArea = foregroundMask.rows * foregroundMask.cols;
-    double coverageRatio = maskedArea / totalArea;
+        // 转为灰度图
+        Mat grayFrame;
+        cvtColor(frame, grayFrame, COLOR_BGR2GRAY);
 
-    // 判断遮挡是否显著
-    return coverageRatio > config.changeThreshold;
-  }
+        // 管理帧缓冲
+        if (frameBuffer.size() == bufferSize) {
+            frameBuffer.pop_front();
+        }
+        frameBuffer.push_back(grayFrame);
 
-  // 告警日志记录
-  void logObstruction(const cv::Mat &frame, const std::string &path) {
-    try {
-      // 确保路径存在
-      if (!fs::exists(path)) {
-        fs::create_directories(path);
-      }
-
-      // 保存遮挡帧到指定目录
-      std::string filename =
-          path + "/obstruction_" + std::to_string(std::time(nullptr)) + ".jpg";
-      cv::imwrite(filename, frame);
-      std::cout << "遮挡帧已保存至: " << filename << std::endl;
-    } catch (const std::exception &e) {
-      std::cerr << "保存遮挡帧失败: " << e.what() << std::endl;
+        // 处理帧
+        processFrame(frame, grayFrame);
     }
-  }
+
+    // 清理资源
+    void cleanup() {
+        frameBuffer.clear();
+        destroyAllWindows();
+    }
+
+    ~ZheDang() { cleanup(); }
 };
 
 int main() {
-  try {
-    // RTSP流地址
-    std::string rtspUrl = "rtsp://admin:admin123@10.0.0.179:554/live";
+    // 视频捕获的设置移回main函数
+    string rtspUrl = "rtsp://admin:admin123@10.0.0.179:554/live";
+    VideoCapture cap(rtspUrl);
 
-    // 打开 RTSP 流
-    cv::VideoCapture cap(rtspUrl);
-
-    // 检查视频流是否成功打开
     if (!cap.isOpened()) {
-      std::cerr << "无法打开RTSP流!" << std::endl;
-      return -1;
+        cerr << "Failed to open RTSP stream." << endl;
+        return -1;
     }
 
-    // 创建遮挡检测器
-    AdvancedObstructionDetector detector;
-
-    // 设置保存路径
-    std::string savePath = "./result";
+    // 创建遮挡检测实例
+    ZheDang processor;
 
     while (true) {
-      cv::Mat frame;
-      cap >> frame;
+        Mat frame;
+        if (!cap.read(frame)) {
+            cerr << "Failed to read frame from RTSP stream." << endl;
+            break;
+        }
 
-      if (frame.empty()) {
-        std::cerr << "获取帧失败" << std::endl;
-        break;
-      }
+        // 处理当前帧
+        processor.processImage(frame);
 
-      // 检测遮挡
-      bool isObstructed = detector.detectObstruction(frame);
-
-      if (isObstructed) {
-        std::cout << "摄像头可能被遮挡!" << std::endl;
-        detector.logObstruction(frame, savePath); // 保存遮挡帧到指定路径
-      }
-
-      // 显示帧
-      cv::imshow("Camera", frame);
-
-      // 按 'q' 退出
-      if (cv::waitKey(1) == 'q')
-        break;
+        // 按ESC退出
+        if (waitKey(10) == 27) {
+            break;
+        }
     }
-  } catch (const std::exception &e) {
-    std::cerr << "发生异常: " << e.what() << std::endl;
-    return -1;
-  }
 
-  return 0;
+    // 清理资源
+    cap.release();
+    processor.cleanup();
+    return 0;
 }
