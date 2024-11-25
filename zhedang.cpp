@@ -7,7 +7,7 @@
 using namespace std;
 using namespace cv;
 
-class ZheDang {
+class CameraBlockage {
   private:
     deque<Mat> frameBuffer;
     const size_t bufferSize;
@@ -143,7 +143,7 @@ class ZheDang {
     }
 
   public:
-    ZheDang(size_t bufSize = 300, int blkSize = 128, bool debug = false) : bufferSize(bufSize), blockSize(blkSize), frameCount(0), is_debug(debug) {}
+    CameraBlockage(size_t bufSize = 300, int blkSize = 128, bool debug = false) : bufferSize(bufSize), blockSize(blkSize), frameCount(0), is_debug(debug) {}
 
     // 处理单帧图像的公开接口
     bool processImage(Mat &frame, double &maxArea) {
@@ -172,7 +172,7 @@ class ZheDang {
         destroyAllWindows();
     }
 
-    ~ZheDang() { cleanup(); }
+    ~CameraBlockage() { cleanup(); }
 };
 
 int main() {
