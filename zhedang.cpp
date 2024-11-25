@@ -9,8 +9,6 @@ using namespace cv;
 
 class CameraBlockage {
   private:
-    deque<Mat> frameBuffer;
-    const size_t bufferSize;
     const int blockSize;
     int frameCount;
     bool is_debug;
@@ -38,7 +36,7 @@ class CameraBlockage {
         return normalizedMSE;
     }
 
-    bool processFrame(Mat &frame, const Mat &grayFrame, double &maxArea) {
+    bool processFrame(Mat &frame, const Mat &grayFrame, double &maxArea, const deque<Mat> &frameBuffer) {
         // Add frame count text
         if (is_debug) {
             string text = "Frame Count: " + to_string(frameCount++);
@@ -46,7 +44,7 @@ class CameraBlockage {
         }
 
         // Process frame buffer
-        if (frameBuffer.size() == bufferSize) {
+        if (!frameBuffer.empty()) {
             const Mat &firstFrame = frameBuffer.front();
 
             int totalBlocks = 0;
@@ -143,10 +141,10 @@ class CameraBlockage {
     }
 
   public:
-    CameraBlockage(size_t bufSize = 300, int blkSize = 128, bool debug = false) : bufferSize(bufSize), blockSize(blkSize), frameCount(0), is_debug(debug) {}
+    CameraBlockage(int blkSize = 128, bool debug = false) : blockSize(blkSize), frameCount(0), is_debug(debug) {}
 
     // 处理单帧图像的公开接口
-    bool processImage(Mat &frame, double &maxArea) {
+    bool processImage(Mat &frame, double &maxArea, deque<Mat> &frameBuffer, size_t bufferSize) {
         if (frame.empty()) {
             cerr << "Empty frame received." << endl;
             return false;
@@ -163,12 +161,11 @@ class CameraBlockage {
         frameBuffer.push_back(grayFrame);
 
         // 处理帧
-        return processFrame(frame, grayFrame, maxArea);
+        return processFrame(frame, grayFrame, maxArea, frameBuffer);
     }
 
     // 清理资源
     void cleanup() {
-        frameBuffer.clear();
         destroyAllWindows();
     }
 
@@ -186,7 +183,11 @@ int main() {
     }
 
     // 创建遮挡检测实例
-    ZheDang processor(300, 128, false); // 设置debug模式
+    CameraBlockage processor(128, false); // 设置debug模式
+
+    // 创建帧缓冲队列
+    deque<Mat> frameBuffer;
+    const size_t bufferSize = 300;
 
     while (true) {
         Mat frame;
@@ -197,7 +198,7 @@ int main() {
 
         double maxArea = 0.0;
         // 处理当前帧
-        bool isBlocked = processor.processImage(frame, maxArea);
+        bool isBlocked = processor.processImage(frame, maxArea, frameBuffer, bufferSize);
 
         // 在图片正中间写入true或false
         string text = isBlocked ? "true" : "false";
