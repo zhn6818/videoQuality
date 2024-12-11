@@ -12,8 +12,8 @@ class CameraBlockage {
     const int blockSize;
     int frameCount;
     bool is_debug;
-    const int diff_value = 50;
-    const double block_threshold = 0.5;
+    int diff_value;
+    double block_threshold;
 
     // 计算MSE函数
     /**
@@ -49,13 +49,56 @@ class CameraBlockage {
         return normalizedMSE;
     }
 
+    /**
+     * 计算两个图像块之间的相似度
+     * @param img1 第一个输入图像块
+     * @param img2 第二个输入图像块
+     * @return 相似度值。值越大表示差异越大
+     */
+    double calculateSimilarity(const Mat &img1, const Mat &img2) {
+        if (img1.size() != img2.size() || img1.type() != img2.type()) {
+            cerr << "Error: Images must have the same dimensions and type." << endl;
+            return -1;
+        }
+
+        // 1. 应用高斯模糊减少噪声影响
+        Mat blur1, blur2;
+        GaussianBlur(img1, blur1, Size(3, 3), 0);
+        GaussianBlur(img2, blur2, Size(3, 3), 0);
+
+        // 2. 计算差异
+        Mat diff;
+        absdiff(blur1, blur2, diff);
+
+        // 3. 应用阈值，忽略微小变化
+        Mat thresholded;
+        threshold(diff, thresholded, 30, 255, THRESH_BINARY);
+
+        // 4. 计算有效差异区域的比例
+        int nonZeroPixels = countNonZero(thresholded);
+        double totalPixels = thresholded.rows * thresholded.cols;
+        double diffRatio = nonZeroPixels / totalPixels;
+
+        // 5. 如果差异比例小于某个阈值，认为是噪声
+        if (diffRatio < 0.1) { // 10%以下的差异视为噪声
+            return 0.0;
+        }
+
+        // 6. 计算归一化的差异值
+        Scalar meanDiff = mean(diff);
+        double normalizedDiff = meanDiff[0] / diff_value;
+
+        return normalizedDiff;
+    }
+
   public:
-    CameraBlockage(int blkSize = 128, bool debug = false) : blockSize(blkSize), frameCount(0), is_debug(debug) {}
+    CameraBlockage(int blkSize = 128, double blockThreshold = 0.9, int diffValue = 40, bool debug = false)
+        : blockSize(blkSize), frameCount(0), is_debug(debug), block_threshold(blockThreshold), diff_value(diffValue) {}
 
     // 处理单帧图像的公开接口
     bool processImage(Mat &grayFrame, double &maxArea, const Mat &firstFrame) {
         // Add frame count text
-        Mat frame;
+        Mat frame = grayFrame;
         if (is_debug) {
             string text = "Frame Count: " + to_string(frameCount++);
             putText(frame, text, Point(10, 50), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 2);
@@ -87,11 +130,11 @@ class CameraBlockage {
                 Mat block1 = firstFrame(blockRegion);
                 Mat block2 = grayFrame(blockRegion);
 
-                double blockSimilarity = calculateMSE(block1, block2);
+                double blockSimilarity = calculateSimilarity(block1, block2);
 
                 // 根据相似度选择颜色
                 Scalar blockColor;
-                if (blockSimilarity > 1.0) {
+                if (blockSimilarity > 0.3) {        // 面积阈值
                     blockColor = Scalar(0, 0, 255); // 红色
                     highSimilarityBlocks++;
                     if (is_debug) {
@@ -169,7 +212,7 @@ int main() {
     }
 
     // 创建遮挡检测实例
-    CameraBlockage processor(128, false); // 设置debug模式
+    CameraBlockage processor(128, 0.85, 80, true); // 设置debug模式
 
     // 创建帧缓冲队列
     deque<Mat> frameBuffer;

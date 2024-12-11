@@ -1,3 +1,8 @@
 {
-    "CodeGPT.apiKey": "Ollama"
+    "CodeGPT.apiKey": "Ollama",
+    "files.associations": {
+        "*.mlu": "cuda",
+        "vector": "cpp",
+        "chrono": "cpp"
+    }
 }
