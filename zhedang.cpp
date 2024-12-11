@@ -97,7 +97,7 @@ class CameraBlockage {
         : blockSize(blkSize), frameCount(0), is_debug(debug), block_threshold(blockThreshold), diff_value(diffValue) {}
 
     // 处理单帧图像的公开接口
-    bool processImage(Mat &grayFrame, double &maxArea, const Mat &firstFrame) {
+    bool processImage(Mat &grayFrame, const Mat &firstFrame) {
         // Add frame count text
         Mat frame = grayFrame;
         if (is_debug) {
@@ -246,9 +246,8 @@ int main() {
             frameBuffer.pop_front();
         }
 
-        double maxArea = 0.0;
         // 处理当前帧
-        bool isBlocked = processor.processImage(frameBuffer.back(), maxArea, frameBuffer.front());
+        bool isBlocked = processor.processImage(frameBuffer.back(), frameBuffer.front());
 
         // 在图片正中间写入true或false
         string text = isBlocked ? "true" : "false";
@@ -259,10 +258,6 @@ int main() {
         Size textSize = getTextSize(text, fontFace, fontScale, thickness, &baseline);
         Point textOrg((frame.cols - textSize.width) / 2, (frame.rows + textSize.height) / 2);
         putText(frame, text, textOrg, fontFace, fontScale, Scalar::all(255), thickness, 8);
-
-        if (isBlocked) {
-            cout << "Max blocked area: " << maxArea << endl;
-        }
 
         // 显示帧
         imshow("Frame", frame);
