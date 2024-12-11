@@ -85,6 +85,7 @@ class CameraBlockage {
         }
 
         // 6. 计算归一化的差异值
+        // 使用thresholded作为掩码计算diff中有效区域的均值
         Scalar meanDiff = mean(diff);
         double normalizedDiff = meanDiff[0] / diff_value;
 
@@ -92,7 +93,7 @@ class CameraBlockage {
     }
 
   public:
-    CameraBlockage(int blkSize = 128, double blockThreshold = 0.9, int diffValue = 40, bool debug = false)
+    CameraBlockage(int blkSize = 128, double blockThreshold = 0.9, int diffValue = 50, bool debug = false)
         : blockSize(blkSize), frameCount(0), is_debug(debug), block_threshold(blockThreshold), diff_value(diffValue) {}
 
     // 处理单帧图像的公开接口
@@ -134,7 +135,7 @@ class CameraBlockage {
 
                 // 根据相似度选择颜色
                 Scalar blockColor;
-                if (blockSimilarity > 0.3) {        // 面积阈值
+                if (blockSimilarity > 0.5) {        // 面积阈值
                     blockColor = Scalar(0, 0, 255); // 红色
                     highSimilarityBlocks++;
                     if (is_debug) {
@@ -212,7 +213,7 @@ int main() {
     }
 
     // 创建遮挡检测实例
-    CameraBlockage processor(128, 0.85, 80, true); // 设置debug模式
+    CameraBlockage processor(64, 0.9, 50, true); // 设置debug模式
 
     // 创建帧缓冲队列
     deque<Mat> frameBuffer;
